@@ -1,4 +1,3 @@
-// ==================== APP CONFIGURATION ====================
 const APP_CONFIG = {
   dbSpreadsheetName: 'GitHub Office Management',
   uploadsFolderName: 'ManagementSystem_Uploads',
@@ -11,8 +10,6 @@ const APP_CONFIG = {
     Followups: ['FollowupID', 'ReferenceType', 'ReferenceId', 'Description', 'TargetDate', 'Status', 'AssignedTo', 'CreatedAt']
   }
 };
-
-// ==================== MAIN ENTRY POINTS ====================
 
 function doGet(e) {
   try {
@@ -33,8 +30,6 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
-// ==================== DATABASE CONNECTION ====================
-
 function getScriptProperties() {
   return PropertiesService.getScriptProperties();
 }
@@ -43,26 +38,26 @@ function getDatabaseSpreadsheet() {
   const props = getScriptProperties();
   const savedId = props.getProperty('GITHUB_OFFICE_MANAGEMENT_DB_ID');
 
-  // Try to open by stored ID
   if (savedId) {
     try {
-      const ss = SpreadsheetApp.openById(savedId);
-      return ss;
+      return SpreadsheetApp.openById(savedId);
     } catch (error) {
       props.deleteProperty('GITHUB_OFFICE_MANAGEMENT_DB_ID');
     }
   }
 
-  // Try to find by name
-  const fileIterator = DriveApp.getFilesByName(APP_CONFIG.dbSpreadsheetName);
-  if (fileIterator.hasNext()) {
-    const file = fileIterator.next();
-    const ss = SpreadsheetApp.openById(file.getId());
-    props.setProperty('GITHUB_OFFICE_MANAGEMENT_DB_ID', ss.getId());
-    return ss;
+  try {
+    const fileIterator = DriveApp.getFilesByName(APP_CONFIG.dbSpreadsheetName);
+    if (fileIterator.hasNext()) {
+      const file = fileIterator.next();
+      const ss = SpreadsheetApp.openById(file.getId());
+      props.setProperty('GITHUB_OFFICE_MANAGEMENT_DB_ID', ss.getId());
+      return ss;
+    }
+  } catch (error) {
+    Logger.log('Error searching by name: ' + error);
   }
 
-  // Try active spreadsheet
   try {
     const active = SpreadsheetApp.getActiveSpreadsheet();
     if (active && active.getName() === APP_CONFIG.dbSpreadsheetName) {
@@ -70,121 +65,226 @@ function getDatabaseSpreadsheet() {
       return active;
     }
   } catch (error) {
-    // continue
+    Logger.log('Error checking active: ' + error);
   }
 
-  // Create new spreadsheet
-  const newSpreadsheet = SpreadsheetApp.create(APP_CONFIG.dbSpreadsheetName);
-  props.setProperty('GITHUB_OFFICE_MANAGEMENT_DB_ID', newSpreadsheet.getId());
-
-  return newSpreadsheet;
+  try {
+    const newSpreadsheet = SpreadsheetApp.create(APP_CONFIG.dbSpreadsheetName);
+    Utilities.sleep(500);
+    props.setProperty('GITHUB_OFFICE_MANAGEMENT_DB_ID', newSpreadsheet.getId());
+    Logger.log('Created new spreadsheet: ' + newSpreadsheet.getId());
+    return newSpreadsheet;
+  } catch (error) {
+    Logger.log('Error creating spreadsheet: ' + error);
+    throw error;
+  }
 }
 
 function getUploadsFolder() {
-  const folderIterator = DriveApp.getFoldersByName(APP_CONFIG.uploadsFolderName);
-  if (folderIterator.hasNext()) {
-    return folderIterator.next();
+  try {
+    const folderIterator = DriveApp.getFoldersByName(APP_CONFIG.uploadsFolderName);
+    if (folderIterator.hasNext()) {
+      return folderIterator.next();
+    }
+    const newFolder = DriveApp.createFolder(APP_CONFIG.uploadsFolderName);
+    Utilities.sleep(300);
+    return newFolder;
+  } catch (error) {
+    Logger.log('Error with uploads folder: ' + error);
+    throw error;
   }
-  return DriveApp.createFolder(APP_CONFIG.uploadsFolderName);
 }
-
-// ==================== SHEET MANAGEMENT ====================
 
 function getOrCreateSheet(sheetName, defaultHeaders) {
   const ss = getDatabaseSpreadsheet();
-  let sheet = ss.getSheetByName(sheetName);
 
-  if (!sheet) {
-    sheet = ss.insertSheet(sheetName);
+  try {
+    let sheet = ss.getSheetByName(sheetName);
+
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      Utilities.sleep(500);
+      Logger.log('Created sheet: ' + sheetName);
+    }
+
+    if (defaultHeaders && defaultHeaders.length > 0) {
+      Utilities.sleep(300);
+      ensureSheetHeaders(sheet, defaultHeaders);
+      Utilities.sleep(200);
+    }
+
+    return sheet;
+  } catch (error) {
+    Logger.log('Error in getOrCreateSheet for ' + sheetName + ': ' + error);
+    throw error;
   }
-
-  if (defaultHeaders && defaultHeaders.length > 0) {
-    ensureSheetHeaders(sheet, defaultHeaders);
-  }
-
-  return sheet;
 }
 
 function ensureSheetHeaders(sheet, defaultHeaders) {
-  if (!sheet) return;
+  if (!sheet || !defaultHeaders || defaultHeaders.length === 0) {
+    Logger.log('No sheet or headers provided');
+    return;
+  }
 
-  const currentHeaders = getSheetHeaders(sheet);
-  const missing = defaultHeaders.filter((h) => !currentHeaders.includes(h));
+  try {
+    const lastRow = sheet.getLastRow();
+    Logger.log('Sheet: ' + sheet.getName() + ', Last Row: ' + lastRow);
 
-  if (missing.length > 0) {
-    const nextCol = sheet.getLastColumn() + 1;
-    sheet.getRange(1, nextCol, 1, missing.length).setValues([missing]);
+    if (lastRow === 0) {
+      // Sheet is completely empty - add all headers to first row
+      Logger.log('Adding headers to empty sheet: ' + defaultHeaders.join(', '));
+      sheet.getRange(1, 1, 1, defaultHeaders.length).setValues([defaultHeaders]);
+      Logger.log('Headers added successfully');
+      return;
+    }
+
+    // Sheet has data - check if first row has headers
+    const currentHeaders = getSheetHeaders(sheet);
+    Logger.log('Current headers: ' + currentHeaders.join(', '));
+
+    if (currentHeaders.length === 0) {
+      // First row is empty - add headers
+      sheet.getRange(1, 1, 1, defaultHeaders.length).setValues([defaultHeaders]);
+      Logger.log('Headers added to empty first row');
+      return;
+    }
+
+    // Check for missing headers
+    const missing = defaultHeaders.filter((h) => !currentHeaders.includes(h));
+    if (missing.length > 0) {
+      const nextCol = sheet.getLastColumn() + 1;
+      sheet.getRange(1, nextCol, 1, missing.length).setValues([missing]);
+      Logger.log('Added missing headers: ' + missing.join(', '));
+    }
+  } catch (error) {
+    Logger.log('Error in ensureSheetHeaders: ' + error);
   }
 }
 
 function getSheetHeaders(sheet) {
-  const lastCol = sheet.getLastColumn();
-  if (lastCol === 0) return [];
+  try {
+    const lastCol = sheet.getLastColumn();
+    if (lastCol === 0) {
+      Logger.log('Sheet has no columns');
+      return [];
+    }
 
-  const row = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  return row.map((cell) => String(cell || '').trim()).filter((h) => h !== '');
+    const row = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const headers = row.map((cell) => String(cell || '').trim()).filter((h) => h !== '');
+    Logger.log('Retrieved headers: ' + headers.join(', '));
+    return headers;
+  } catch (error) {
+    Logger.log('Error in getSheetHeaders: ' + error);
+    return [];
+  }
 }
 
 function getAllSheets() {
-  const ss = getDatabaseSpreadsheet();
-  return ss.getSheets().map(function(sheet) {
-    return sheet.getName();
-  });
+  try {
+    const ss = getDatabaseSpreadsheet();
+    const sheetArray = ss.getSheets();
+    const names = [];
+
+    for (let i = 0; i < sheetArray.length; i++) {
+      names.push(sheetArray[i].getName());
+    }
+
+    Logger.log('All sheets: ' + names.join(', '));
+    return names;
+  } catch (error) {
+    Logger.log('Error in getAllSheets: ' + error);
+    return [];
+  }
 }
 
 function ensureDatabase() {
-  const ss = getDatabaseSpreadsheet();
+  try {
+    Logger.log('========== Starting ensureDatabase ==========');
 
-  Object.keys(APP_CONFIG.defaultSheets).forEach(function(sheetName) {
-    const headers = APP_CONFIG.defaultSheets[sheetName];
-    getOrCreateSheet(sheetName, headers);
-  });
+    const ss = getDatabaseSpreadsheet();
+    Logger.log('Got spreadsheet: ' + ss.getName());
 
-  return {
-    success: true,
-    message: 'Database ensured',
-    sheets: getAllSheets()
-  };
+    const sheetNames = Object.keys(APP_CONFIG.defaultSheets);
+    Logger.log('Sheets to create: ' + sheetNames.join(', '));
+
+    for (let i = 0; i < sheetNames.length; i++) {
+      const sheetName = sheetNames[i];
+      const headers = APP_CONFIG.defaultSheets[sheetName];
+
+      Logger.log('Processing sheet: ' + sheetName + ' with ' + headers.length + ' headers');
+      const sheet = getOrCreateSheet(sheetName, headers);
+      
+      // Verify headers were added
+      const addedHeaders = getSheetHeaders(sheet);
+      Logger.log('Sheet ' + sheetName + ' now has headers: ' + addedHeaders.join(', '));
+      
+      Utilities.sleep(300);
+    }
+
+    const finalSheets = getAllSheets();
+    Logger.log('Final sheets created: ' + finalSheets.join(', '));
+    Logger.log('========== ensureDatabase COMPLETED ==========');
+
+    return {
+      success: true,
+      message: 'Database ensured successfully',
+      sheets: finalSheets
+    };
+  } catch (err) {
+    Logger.log('Error in ensureDatabase: ' + String(err));
+    return {
+      success: false,
+      message: String(err),
+      sheets: []
+    };
+  }
 }
 
-// ==================== DATA OPERATIONS ====================
-
 function sheetToObjects(sheetName) {
-  const sheet = getDatabaseSpreadsheet().getSheetByName(sheetName);
-  if (!sheet) return [];
+  try {
+    const sheet = getDatabaseSpreadsheet().getSheetByName(sheetName);
+    if (!sheet) return [];
 
-  const lastRow = sheet.getLastRow();
-  const lastCol = sheet.getLastColumn();
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
 
-  if (lastRow < 2 || lastCol === 0) return [];
+    if (lastRow < 2 || lastCol === 0) return [];
 
-  const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  const headers = data[0].map((header) => String(header || '').trim());
+    const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    const headers = data[0].map((header) => String(header || '').trim());
 
-  return data.slice(1)
-    .filter((row) => row.some((cell) => String(cell || '').trim() !== ''))
-    .map((row) => {
-      const obj = {};
-      headers.forEach((header, index) => {
-        if (header) {
-          obj[header] = row[index] !== undefined ? row[index] : '';
-        }
+    return data.slice(1)
+      .filter((row) => row.some((cell) => String(cell || '').trim() !== ''))
+      .map((row) => {
+        const obj = {};
+        headers.forEach((header, index) => {
+          if (header) {
+            obj[header] = row[index] !== undefined ? row[index] : '';
+          }
+        });
+        return obj;
       });
-      return obj;
-    });
+  } catch (error) {
+    Logger.log('Error in sheetToObjects: ' + error);
+    return [];
+  }
 }
 
 function getSheetDataWithHeaders(sheetName) {
-  ensureDatabase();
-  const sheet = getOrCreateSheet(sheetName, APP_CONFIG.defaultSheets[sheetName] || []);
-  const headers = getSheetHeaders(sheet);
-  const rows = sheetToObjects(sheetName);
+  try {
+    ensureDatabase();
+    const sheet = getOrCreateSheet(sheetName, APP_CONFIG.defaultSheets[sheetName] || []);
+    const headers = getSheetHeaders(sheet);
+    const rows = sheetToObjects(sheetName);
 
-  return {
-    success: true,
-    headers: headers,
-    data: rows
-  };
+    return {
+      success: true,
+      headers: headers,
+      data: rows
+    };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
 }
 
 function addNewRow(sheetName, rowObject) {
@@ -200,7 +300,7 @@ function addNewRow(sheetName, rowObject) {
       return { success: true, message: 'Row added with new headers' };
     }
 
-    const values = headers.map((header) => 
+    const values = headers.map((header) =>
       rowObject && Object.prototype.hasOwnProperty.call(rowObject, header) ? rowObject[header] : ''
     );
     sheet.appendRow(values);
@@ -277,8 +377,6 @@ function getRowById(sheetName, idField, idValue) {
   return rows.find((row) => String(row[idField] || '').trim() === String(idValue || '').trim()) || null;
 }
 
-// ==================== AUTHENTICATION ====================
-
 function hashPassword(password) {
   const digest = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
@@ -325,7 +423,7 @@ function normalizePermissions(value) {
 
 function getUserByUsername(username) {
   const users = sheetToObjects('Users');
-  return users.find((u) => 
+  return users.find((u) =>
     String(u.Username || '').trim().toLowerCase() === String(username || '').trim().toLowerCase()
   ) || null;
 }
@@ -357,8 +455,6 @@ function loginUser(username, password) {
     return { success: false, message: 'Login failed: ' + String(err) };
   }
 }
-
-// ==================== USER MANAGEMENT ====================
 
 function getUsers() {
   return sheetToObjects('Users').map((u) => ({
@@ -403,14 +499,12 @@ function createUser(payload) {
   }
 }
 
-// ==================== MAIN WORKS ====================
-
 function getMainWorks() {
   const mainWorks = sheetToObjects('MainWorks');
   const tasks = sheetToObjects('Tasks');
 
   return mainWorks.map((mainWork) => {
-    const relatedTasks = tasks.filter((task) => 
+    const relatedTasks = tasks.filter((task) =>
       String(task.MainWorkID || '').trim() === String(mainWork.MainWorkID || '').trim()
     );
 
@@ -470,8 +564,6 @@ function saveMainWork(payload) {
   }
 }
 
-// ==================== TASKS ====================
-
 function getTasks(filterStatus) {
   const tasks = sheetToObjects('Tasks');
   const mainWorks = sheetToObjects('MainWorks');
@@ -480,7 +572,7 @@ function getTasks(filterStatus) {
 
   return tasks
     .map((task) => {
-      const mainWork = mainWorks.find((mw) => 
+      const mainWork = mainWorks.find((mw) =>
         String(mw.MainWorkID || '').trim() === String(task.MainWorkID || '').trim()
       );
       return {
@@ -554,8 +646,6 @@ function updateTaskStatus(taskId, status) {
   }
 }
 
-// ==================== FOLLOW-UPS ====================
-
 function getFollowups() {
   return sheetToObjects('Followups').map((row) => ({
     ...row,
@@ -598,15 +688,13 @@ function updateFollowupStatus(followupId, status) {
   }
 }
 
-// ==================== STUDENTS ====================
-
 function getStudents() {
   const students = sheetToObjects('Students');
   const documents = sheetToObjects('StudentDocuments');
 
   return students.map((student) => ({
     ...student,
-    Documents: documents.filter((doc) => 
+    Documents: documents.filter((doc) =>
       String(doc.StudentID || '').trim() === String(student.StudentID || '').trim()
     )
   }));
@@ -671,8 +759,6 @@ function registerStudent(studentData, documents) {
   }
 }
 
-// ==================== DASHBOARD ====================
-
 function getDashboardData() {
   try {
     ensureDatabase();
@@ -693,7 +779,7 @@ function getDashboardData() {
       const status = String(t.Status || '').trim().toLowerCase();
       return status === 'pending' || status === 'in progress' || status === 'in-progress';
     }).length;
-    summary.openFollowups = followups.filter((f) => 
+    summary.openFollowups = followups.filter((f) =>
       String(f.Status || '').trim().toLowerCase() === 'open'
     ).length;
     summary.activeStudents = students.filter((s) => {
@@ -710,8 +796,6 @@ function getDashboardData() {
     return { success: false, message: String(err) };
   }
 }
-
-// ==================== FILE UPLOAD ====================
 
 function getMimeTypeFromFilename(fileName) {
   const name = String(fileName || '').toLowerCase();
@@ -752,8 +836,6 @@ function uploadBase64File(base64Data, fileName, folderName) {
     return { success: false, message: String(err) };
   }
 }
-
-// ==================== INITIALIZATION ====================
 
 function setupDatabase() {
   return ensureDatabase();
